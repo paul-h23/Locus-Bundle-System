@@ -6,6 +6,11 @@ using System.IO;
 
 namespace BundleSystem
 {
+    public interface IURLTransformer
+    {
+        IEnumerator TransformURL(string URL);
+    }
+    
     /// <summary>
     /// Handle Resources expecially assetbundles.
     /// Also works in editor
@@ -15,6 +20,7 @@ namespace BundleSystem
         //instance is almost only for coroutines
         private static BundleManagerHelper s_Helper { get; set; }
         private static DebugGuiHelper s_DebugGUI { get; set; }
+        public static IURLTransformer URLTransformer { get; set; }
 
         class LoadedBundle
         {
@@ -221,7 +227,24 @@ namespace BundleSystem
                 yield break;
             }
 
-            var manifestReq = UnityWebRequest.Get(Path.Combine(RemoteURL, AssetbundleBuildSettings.ManifestFileName));
+            var loadURL = Path.Combine(RemoteURL, AssetbundleBuildSettings.ManifestFileName);
+            
+            // Transform URL if a transformer has been registered.
+            if (URLTransformer != null)
+            {
+                var cd = new CoroutineWithData(s_Helper, URLTransformer.TransformURL(loadURL));
+                yield return cd.Coroutine;
+                if (LogMessages)
+                    Debug.Log(
+                        $"Transformed URL for: loadURL {loadURL}, txUrl : {cd.result}");
+                if (cd.result == null)
+                {
+                    result.Done(BundleErrorCode.NetworkError);
+                    yield break;
+                }
+                loadURL = cd.result.ToString();
+            }
+            var manifestReq = UnityWebRequest.Get(loadURL);
             yield return manifestReq.SendWebRequest();
 
             if (manifestReq.isHttpError || manifestReq.isNetworkError)
@@ -327,6 +350,21 @@ namespace BundleSystem
                 }
                 else
                 {
+                    // Transform URL if a transformer has been registered.
+                    if (!islocalBundle && !isCached && URLTransformer != null)
+                    {
+                        var cd = new CoroutineWithData(s_Helper, URLTransformer.TransformURL(loadURL));
+                        yield return cd.Coroutine;
+                        if (LogMessages)
+                            Debug.Log(
+                                $"Transformed URL for: loadURL {loadURL}, fbUrl : {cd.result}");
+                        if (cd.result == null)
+                        {
+                            result.Done(BundleErrorCode.NetworkError);
+                            yield break;
+                        }
+                        loadURL = cd.result.ToString();
+                    }
                     var bundleReq = islocalBundle ? UnityWebRequestAssetBundle.GetAssetBundle(loadURL) : UnityWebRequestAssetBundle.GetAssetBundle(loadURL, bundleInfo.AsCached);
                     var operation = bundleReq.SendWebRequest();
                     while (!bundleReq.isDone)
@@ -386,6 +424,7 @@ namespace BundleSystem
             result.Done(BundleErrorCode.Success);
         }
 
+
         //helper class for coroutine and callbacks
         private class BundleManagerHelper : MonoBehaviour
         {
@@ -400,6 +439,26 @@ namespace BundleSystem
             }
         }
 
-        
+        private class CoroutineWithData
+        {
+            public Coroutine Coroutine { get; private set; }
+            public object result;
+            private IEnumerator target;
+
+            public CoroutineWithData(MonoBehaviour owner, IEnumerator target)
+            {
+                this.target = target;
+                this.Coroutine = owner.StartCoroutine(Run());
+            }
+
+            private IEnumerator Run()
+            {
+                while (target.MoveNext())
+                {
+                    result = target.Current;
+                    yield return result;
+                }
+            }
+        }        
     }
 }
