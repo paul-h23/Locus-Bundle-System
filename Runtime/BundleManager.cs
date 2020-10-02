@@ -331,6 +331,7 @@ namespace BundleSystem
             for (int i = 0; i < downloadBundleList.Count; i++)
             {
                 result.SetCurrentIndex(i);
+                result.SetProgress(0.0f);
                 var bundleInfo = downloadBundleList[i];
 
                 //remove from the set so we can track bundles that should be cleared
